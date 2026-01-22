@@ -86,9 +86,24 @@ const getAQILevel = (value: number | null) => {
 
 function AQIIndicator({ value, size = "lg" }: { value: number; size?: "sm" | "lg" }) {
   const getColor = (val: number) => {
-    if (val <= 50) return { bg: "bg-aqi-good", text: "text-gradient-good", ring: "ring-emerald-400/30" };
-    if (val <= 100) return { bg: "bg-aqi-moderate", text: "text-gradient-moderate", ring: "ring-amber-400/30" };
-    return { bg: "bg-aqi-poor", text: "text-gradient-poor", ring: "ring-red-400/30" };
+    if (val <= 50) return { 
+      bg: "bg-aqi-good", 
+      text: "text-gradient-good", 
+      ring: "ring-emerald-400/30",
+      pulse: "bg-emerald-400/20"
+    };
+    if (val <= 100) return { 
+      bg: "bg-aqi-moderate", 
+      text: "text-gradient-moderate", 
+      ring: "ring-amber-400/30",
+      pulse: "bg-amber-400/20"
+    };
+    return { 
+      bg: "bg-aqi-poor", 
+      text: "text-gradient-poor", 
+      ring: "ring-red-400/30",
+      pulse: "bg-red-400/20"
+    };
   };
 
   const colors = getColor(value);
@@ -98,7 +113,7 @@ function AQIIndicator({ value, size = "lg" }: { value: number; size?: "sm" | "lg
     <div className={`relative ${sizeClasses} rounded-full ${colors.bg} flex items-center justify-center ring-2 ${colors.ring}`}>
       <span className={`font-display font-bold ${colors.text}`}>{value}</span>
       {size === "lg" && (
-        <div className="absolute inset-0 rounded-full animate-pulse-ring bg-emerald-400/20" />
+        <div className={`absolute inset-0 rounded-full animate-pulse-ring ${colors.pulse}`} />
       )}
     </div>
   );
