@@ -490,6 +490,43 @@ def reverse_geocode_endpoint():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/get-aqi", methods=["POST"])
+def get_aqi_endpoint():
+    """
+    Endpoint to fetch AQI for a coordinate.
+    
+    Request JSON:
+        {
+            "lat": number,
+            "lon": number
+        }
+        
+    Response JSON:
+        {
+            "aqi": number (0-500)
+        }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        lat = data.get("lat")
+        lon = data.get("lon")
+        
+        if lat is None or lon is None:
+            return jsonify({"error": "Latitude and longitude required"}), 400
+            
+        aqi = get_aqi_for_coordinate(float(lat), float(lon))
+        return jsonify({"aqi": round(aqi, 2)})
+        
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        print(f"Get AQI error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/health", methods=["GET"])
 def health():
     """Health check endpoint."""

@@ -76,10 +76,12 @@ function MapController({ routes, recommendedId }: { routes: RouteData[]; recomme
   return null;
 }
 
-const currentAQI = {
-  value: 45,
-  level: "Good",
-  description: "Air quality is satisfactory",
+// Helper function to get AQI level and description from value
+const getAQILevel = (value: number | null) => {
+  if (value === null) return { level: "Unknown", description: "Air quality data unavailable" };
+  if (value <= 50) return { level: "Good", description: "Air quality is satisfactory" };
+  if (value <= 100) return { level: "Moderate", description: "Air quality is acceptable" };
+  return { level: "Poor", description: "Air quality may be unhealthy" };
 };
 
 function AQIIndicator({ value, size = "lg" }: { value: number; size?: "sm" | "lg" }) {
@@ -251,6 +253,9 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [locating, setLocating] = useState(false);
   const [recommendedRouteId, setRecommendedRouteId] = useState<string | null>(null);
+  const [currentAQI, setCurrentAQI] = useState<number | null>(45); // Default to 45, null means not loaded
+  const [aqiLoading, setAqiLoading] = useState(false);
+  const [aqiError, setAqiError] = useState(false);
   const { toast } = useToast();
 
   const handleFindRoutes = async () => {
@@ -354,6 +359,7 @@ export default function Home() {
           const { latitude, longitude } = position.coords;
           console.log(`Got location: ${latitude}, ${longitude}`);
 
+          // Existing functionality: Fetch address and set origin
           const res = await apiRequest("POST", "/reverse-geocode", {
             lat: latitude,
             lon: longitude,
@@ -370,6 +376,34 @@ export default function Home() {
               title: "Location Found",
               description: `Set starting point to: ${data.address}`,
             });
+          }
+
+          // New functionality: Fetch AQI for current location
+          setAqiLoading(true);
+          setAqiError(false);
+          try {
+            const aqiRes = await apiRequest("POST", "/get-aqi", {
+              lat: latitude,
+              lon: longitude,
+            });
+
+            if (!aqiRes.ok) {
+              throw new Error("Failed to fetch AQI");
+            }
+
+            const aqiData = await aqiRes.json();
+            if (aqiData.aqi !== undefined) {
+              setCurrentAQI(Math.round(aqiData.aqi));
+              setAqiError(false);
+            } else {
+              throw new Error("Invalid AQI response");
+            }
+          } catch (aqiError) {
+            console.error("AQI fetch error:", aqiError);
+            setAqiError(true);
+            setCurrentAQI(null);
+          } finally {
+            setAqiLoading(false);
           }
         } catch (error) {
           console.error("Reverse geocode error:", error);
@@ -417,7 +451,13 @@ export default function Home() {
               <div className="hidden sm:flex items-center gap-2 text-sm">
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
                   <Sparkles className="w-4 h-4" />
-                  <span className="font-medium">AQI: {currentAQI.value}</span>
+                  <span className="font-medium">
+                    AQI: {
+                      aqiLoading ? "Loading..." : 
+                      aqiError ? "AQI unavailable" : 
+                      currentAQI !== null ? currentAQI : "..."
+                    }
+                  </span>
                 </div>
               </div>
               <Button
@@ -575,13 +615,33 @@ export default function Home() {
             <Card className="p-6 sm:p-8 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/30 dark:to-teal-950/30 border-emerald-200/50 dark:border-emerald-800/30">
               <div className="flex flex-col sm:flex-row items-center gap-6">
                 <div className="flex-shrink-0">
-                  <AQIIndicator value={currentAQI.value} size="lg" />
+                  {currentAQI !== null && !aqiError ? (
+                    <AQIIndicator value={currentAQI} size="lg" />
+                  ) : aqiLoading ? (
+                    <div className="w-24 h-24 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                      <span className="text-lg text-muted-foreground">...</span>
+                    </div>
+                  ) : (
+                    <div className="w-24 h-24 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                      <span className="text-sm text-muted-foreground text-center px-2">N/A</span>
+                    </div>
+                  )}
                 </div>
                 <div className="text-center sm:text-left">
                   <h3 className="font-display text-2xl font-bold mb-1">
-                    Current Air Quality: <span className="text-gradient-good">{currentAQI.level}</span>
+                    Current Air Quality: {
+                      currentAQI !== null && !aqiError ? (
+                        <span className="text-gradient-good">{getAQILevel(currentAQI).level}</span>
+                      ) : aqiLoading ? (
+                        <span className="text-muted-foreground">Loading...</span>
+                      ) : (
+                        <span className="text-muted-foreground">Unavailable</span>
+                      )
+                    }
                   </h3>
-                  <p className="text-muted-foreground mb-3">{currentAQI.description}</p>
+                  <p className="text-muted-foreground mb-3">
+                    {currentAQI !== null && !aqiError ? getAQILevel(currentAQI).description : aqiLoading ? "Fetching air quality data..." : "Air quality data is currently unavailable"}
+                  </p>
                   <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
                     <Badge variant="secondary" className="gap-1">
                       <Wind className="w-3 h-3" />
