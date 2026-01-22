@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -33,6 +33,7 @@ interface RouteData {
   aqiScore: number;
   aqiLevel: string;
   distance: string;
+  distanceKm: number; // Store raw distance in km for time calculation
   duration: string;
   mode: string;
   description: string;
@@ -260,6 +261,15 @@ function MapVisualization({ routes, recommendedId, origin, destination }: {
   );
 }
 
+// Helper function to calculate travel time based on mode and distance
+const calculateTravelTime = (distanceKm: number, mode: "walk" | "bike"): string => {
+  if (distanceKm <= 0) return "Calculating...";
+  const speedKmh = mode === "walk" ? 5 : 15; // 5 km/h for walking, 15 km/h for cycling
+  const timeHours = distanceKm / speedKmh;
+  const timeMinutes = Math.round(timeHours * 60);
+  return `${timeMinutes} min`;
+};
+
 export default function Home() {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
@@ -271,6 +281,7 @@ export default function Home() {
   const [currentAQI, setCurrentAQI] = useState<number | null>(45); // Default to 45, null means not loaded
   const [aqiLoading, setAqiLoading] = useState(false);
   const [aqiError, setAqiError] = useState(false);
+  const [travelMode, setTravelMode] = useState<"walk" | "bike">("bike"); // Default to bike
   const { toast } = useToast();
 
   const handleFindRoutes = async () => {
@@ -327,7 +338,6 @@ export default function Home() {
         };
 
         const distanceKm = calculateDistance(route.coordinates || []);
-        const estimatedDuration = Math.round(distanceKm * 12); // ~12 min/km walking speed
 
         return {
           id: index + 1,
@@ -335,8 +345,9 @@ export default function Home() {
           aqiScore: Math.round(route.average_aqi),
           aqiLevel: level,
           distance: distanceKm > 0 ? `${distanceKm.toFixed(1)} km` : "Calculating...",
-          duration: estimatedDuration > 0 ? `${estimatedDuration} min` : "Calculating...",
-          mode: "walk", // Backend currently doing walking
+          distanceKm: distanceKm, // Store raw distance for time calculation
+          duration: calculateTravelTime(distanceKm, travelMode), // Calculate based on current mode
+          mode: travelMode, // Use current travel mode
           description: index === 0 ? "Recommended Route" : "Alternative Route",
           savings: index === 0 ? "Recommended" : savings,
           coordinates: route.coordinates || [],
@@ -356,6 +367,18 @@ export default function Home() {
       setLoading(false);
     }
   };
+
+  // Update route durations when travel mode changes
+  useEffect(() => {
+    setRoutes(prevRoutes => {
+      if (prevRoutes.length === 0) return prevRoutes;
+      return prevRoutes.map(route => ({
+        ...route,
+        duration: calculateTravelTime(route.distanceKm, travelMode),
+        mode: travelMode,
+      }));
+    });
+  }, [travelMode]);
 
   const handleMyLocation = () => {
     if (!navigator.geolocation) {
@@ -564,11 +587,27 @@ export default function Home() {
                   </div>
 
                   <div className="flex items-center justify-center gap-6 pt-2">
-                    <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="button-mode-walk">
+                    <button 
+                      onClick={() => setTravelMode("walk")}
+                      className={`flex items-center gap-2 text-sm transition-colors ${
+                        travelMode === "walk" 
+                          ? "text-primary font-medium" 
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      data-testid="button-mode-walk"
+                    >
                       <Footprints className="w-4 h-4" />
                       Walk
                     </button>
-                    <button className="flex items-center gap-2 text-sm text-primary font-medium" data-testid="button-mode-bike">
+                    <button 
+                      onClick={() => setTravelMode("bike")}
+                      className={`flex items-center gap-2 text-sm transition-colors ${
+                        travelMode === "bike" 
+                          ? "text-primary font-medium" 
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      data-testid="button-mode-bike"
+                    >
                       <Bike className="w-4 h-4" />
                       Bike
                     </button>
