@@ -14,8 +14,17 @@ from typing import List, Tuple, Dict, Any
 import time
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend requests
-
+CORS(
+    app,
+    supports_credentials=True,
+    resources={
+        r"/*": {
+            "origins": [
+                "https://aero-mon-9uux.vercel.app"
+            ]
+        }
+    },
+)
 # Configuration
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_URL = "https://router.project-osrm.org/route/v1"
