@@ -450,12 +450,32 @@ export default function Home() {
 
     try {
       const isRecommended = route.name.includes(recommendedRouteId || "");
+      
+      // Find the other route for comparison
+      const otherRoute = routes.find(r => r.id !== route.id);
+      const otherRouteAqi = otherRoute ? otherRoute.aqiScore : undefined;
+      
+      // Calculate cleanliness percentage
+      let cleanlinessPercentage = 0;
+      if (otherRouteAqi && route.aqiScore < otherRouteAqi) {
+        cleanlinessPercentage = ((otherRouteAqi - route.aqiScore) / otherRouteAqi) * 100;
+      } else if (otherRouteAqi && route.aqiScore > otherRouteAqi) {
+        cleanlinessPercentage = ((route.aqiScore - otherRouteAqi) / route.aqiScore) * 100;
+      }
+      
+      // Parse duration to minutes
+      const durationMatch = route.duration.match(/(\d+)\s*min/);
+      const durationMin = durationMatch ? parseInt(durationMatch[1]) : 0;
+      
       const res = await apiRequest("POST", "/get-route-explanation", {
         route_id: route.routeId || route.name.replace("Route ", ""),
         average_aqi: route.aqiScore,
         aqi_values_list: route.aqiValuesList || [],
         distance_km: route.distanceKm,
+        duration_min: durationMin,
         is_recommended: isRecommended,
+        other_route_aqi: otherRouteAqi,
+        cleanliness_percentage: cleanlinessPercentage,
         coordinates: route.coordinates || [],
       });
 

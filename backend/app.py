@@ -596,7 +596,10 @@ def get_route_explanation():
             "average_aqi": number,
             "aqi_values_list": [number, number, ...],
             "distance_km": number,
+            "duration_min": number (optional),
             "is_recommended": boolean,
+            "other_route_aqi": number (optional, for comparison),
+            "cleanliness_percentage": number (optional, % cleaner than other route),
             "coordinates": [[lat, lon], [lat, lon], ...]
         }
     
@@ -617,12 +620,30 @@ def get_route_explanation():
         average_aqi = data.get("average_aqi")
         aqi_values_list = data.get("aqi_values_list", [])
         distance_km = data.get("distance_km", 0)
+        duration_min = data.get("duration_min", 0)
         is_recommended = data.get("is_recommended", False)
+        other_route_aqi = data.get("other_route_aqi")
+        cleanliness_percentage = data.get("cleanliness_percentage", 0)
         coordinates = data.get("coordinates", [])
         
         # Calculate statistics
         peak_aqi = max(aqi_values_list) if aqi_values_list else average_aqi
         min_aqi = min(aqi_values_list) if aqi_values_list else average_aqi
+        
+        # Calculate AQI range description
+        if aqi_values_list:
+            sorted_aqi = sorted(aqi_values_list)
+            aqi_range = f"{sorted_aqi[0]:.0f}–{sorted_aqi[-1]:.0f}"
+            # Most common range (middle 50%)
+            mid_start = len(sorted_aqi) // 4
+            mid_end = len(sorted_aqi) - mid_start
+            if mid_end > mid_start:
+                common_range = f"{sorted_aqi[mid_start]:.0f}–{sorted_aqi[mid_end-1]:.0f}"
+            else:
+                common_range = aqi_range
+        else:
+            aqi_range = f"{min_aqi:.0f}–{peak_aqi:.0f}"
+            common_range = aqi_range
         
         # Determine AQI level
         if average_aqi <= 50:
@@ -644,25 +665,72 @@ def get_route_explanation():
             aqi_level = "Hazardous"
             aqi_description = "hazardous air quality"
         
-        # Build prompt for Gemini
-        prompt = f"""You are an air quality route analysis assistant. Provide a clear, informative explanation about Route {route_id}.
+        # Build comprehensive prompt for Gemini
+        comparison_text = ""
+        if other_route_aqi:
+            other_route_id = "B" if route_id == "A" else "A"
+            if is_recommended:
+                comparison_text = f"\nComparison: Route {route_id} has an average AQI of {average_aqi:.1f}, while Route {other_route_id} has {other_route_aqi:.1f}. "
+                if cleanliness_percentage > 0:
+                    comparison_text += f"Route {route_id} offers approximately {cleanliness_percentage:.0f}% cleaner air compared to Route {other_route_id}. "
+            else:
+                comparison_text = f"\nComparison: Route {other_route_id} (the recommended route) has better air quality with an average AQI of {other_route_aqi:.1f}, compared to Route {route_id}'s {average_aqi:.1f}. "
+        
+        duration_text = ""
+        if duration_min > 0:
+            hours = duration_min // 60
+            minutes = duration_min % 60
+            if hours > 0:
+                duration_text = f"{hours} hour{'s' if hours > 1 else ''} and {minutes} minute{'s' if minutes != 1 else ''}"
+            else:
+                duration_text = f"{minutes} minute{'s' if minutes != 1 else ''}"
+        
+        prompt = f"""You are an air quality route analysis assistant. Provide a comprehensive, structured explanation about Route {route_id}.
 
 Route Information:
 - Route ID: {route_id}
 - Distance: {distance_km:.1f} km
+- Travel Time: {duration_text if duration_text else 'Not specified'}
 - Average AQI: {average_aqi:.1f} ({aqi_level})
 - Peak AQI: {peak_aqi:.1f}
 - Minimum AQI: {min_aqi:.1f}
-- Recommended: {"Yes" if is_recommended else "No"}
+- AQI Range: {aqi_range}
+- Most Common AQI Range: {common_range}
+- Recommended: {"Yes" if is_recommended else "No"}{comparison_text}
 
-Provide a comprehensive explanation (2-3 paragraphs) covering:
-1. Why this route is {"recommended" if is_recommended else "an alternative option"}
-2. The air quality levels along this route ({aqi_description})
-3. The exposure risk based on the AQI range ({min_aqi:.1f} to {peak_aqi:.1f})
-4. Health considerations for travelers
-5. Any additional insights about this route
+Provide a detailed explanation covering ALL of the following points in a natural, flowing narrative:
 
-Write in a friendly, informative tone. Be specific about the AQI values and what they mean for health."""
+1. **Why this route is {'recommended' if is_recommended else 'an alternative option'}**
+   - Explain the recommendation status clearly
+   - If recommended, explain why it's better (e.g., "Route {route_id} is recommended because it has lower air pollution exposure compared to Route {'B' if route_id == 'A' else 'A'}.")
+   - If alternative, explain its position relative to the recommended route
+
+2. **Air quality levels along the route**
+   - Describe the AQI range (e.g., "Along Route {route_id}, AQI values mostly range between {common_range}, indicating {aqi_description.lower()}.")
+   - Mention the peak and minimum values
+   - Explain what these levels mean in practical terms
+
+3. **Health exposure comparison**
+   - Compare exposure risk if comparison data is available
+   - Explain the health implications (e.g., "The alternative route passes through areas with higher peak AQI, increasing pollution exposure.")
+   - Discuss who might be most affected
+
+4. **Travel distance and time context**
+   - Mention the distance ({distance_km:.1f} km) and time ({duration_text if duration_text else 'travel time'})
+   - Explain how this relates to the recommendation (e.g., "Both routes take approximately {distance_km:.1f} km and {duration_text if duration_text else 'similar time'}, so air quality becomes the deciding factor.")
+
+5. **Cleanliness percentage**
+   - If available, mention the percentage difference (e.g., "Route {route_id} offers approximately {cleanliness_percentage:.0f}% cleaner air compared to the alternative route.")
+   - Put this in context of what it means for the traveler
+
+6. **Practical suggestion**
+   - Provide actionable advice (e.g., "If you are sensitive to pollution or traveling with children, Route {route_id if is_recommended else 'the recommended route'} is safer.")
+   - Consider different traveler profiles (sensitive individuals, children, elderly, etc.)
+
+7. **Friendly closing line**
+   - End with an encouraging, positive statement (e.g., "Choosing Route {route_id if is_recommended else 'the recommended route'} ensures a healthier and more comfortable journey.")
+
+Write in a friendly, conversational tone. Make it informative but easy to understand. Structure it as 2-3 well-organized paragraphs that flow naturally. Be specific about AQI values and their health implications."""
 
         # Call Gemini API
         gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
