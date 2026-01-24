@@ -277,9 +277,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📧 Contact
 
-Your Name - [@yourtwitter](Emil Jinu) - emil.jinx@gmail.com
+Your Name - Emil Jinu - emil.jinx@gmail.com
 
-Project Link: [https://github.com/yourusername/AeroMon](https://github.com/emiljinx-core/AeroMon)
+Project Link: [https://github.com/emiljinx-core/AeroMon](https://github.com/emiljinx-core/AeroMon)
 
 ---
 
