@@ -373,16 +373,38 @@ export default function Home() {
       // Store recommended route ID
       setRecommendedRouteId(data.recommended_route_id || null);
 
+      // Find the recommended route's AQI for comparison
+      const recommendedRoute = data.routes.find((r: any) => r.route_id === data.recommended_route_id);
+      const recommendedAqi = recommendedRoute ? recommendedRoute.average_aqi : null;
+
       const transformedRoutes = data.routes.map((route: any, index: number) => {
         let level = "poor";
         if (route.average_aqi <= 50) level = "good";
         else if (route.average_aqi <= 100) level = "moderate";
 
-        // Calculate savings relative to the worst route in the set (or just a baseline)
-        const maxAqi = Math.max(...data.routes.map((r: any) => r.average_aqi));
-        const savings = maxAqi > 0
-          ? `${Math.round(((maxAqi - route.average_aqi) / maxAqi) * 100)}% cleaner air`
-          : "Standard route";
+        // Calculate cleanliness percentage compared to the recommended route
+        let savings = "Standard route";
+        const isRecommended = route.route_id === data.recommended_route_id;
+        
+        if (isRecommended) {
+          // Recommended route shows "Recommended"
+          savings = "Recommended";
+        } else if (recommendedAqi && recommendedAqi > 0) {
+          // For alternative route, calculate how much worse it is
+          const aqiDifference = route.average_aqi - recommendedAqi;
+          if (aqiDifference > 0) {
+            // Alternative route has higher AQI (worse air quality)
+            const percentageWorse = Math.round((aqiDifference / recommendedAqi) * 100);
+            savings = `${percentageWorse}% less clean air`;
+          } else if (aqiDifference < 0) {
+            // Alternative route has lower AQI (better air quality) - shouldn't happen if recommendation is correct
+            const percentageBetter = Math.round((Math.abs(aqiDifference) / recommendedAqi) * 100);
+            savings = `${percentageBetter}% cleaner air`;
+          } else {
+            // Same AQI
+            savings = "Same air quality";
+          }
+        }
 
         // Calculate approximate distance from coordinates
         const calculateDistance = (coords: [number, number][]) => {
@@ -414,8 +436,8 @@ export default function Home() {
           distanceKm: distanceKm, // Store raw distance for time calculation
           duration: calculateTravelTime(distanceKm, travelMode), // Calculate based on current mode
           mode: travelMode, // Use current travel mode
-          description: index === 0 ? "Recommended Route" : "Alternative Route",
-          savings: index === 0 ? "Recommended" : savings,
+          description: isRecommended ? "Recommended Route" : "Alternative Route",
+          savings: savings,
           coordinates: route.coordinates || [],
           routeId: route.route_id, // Store route ID (A or B)
           aqiValuesList: route.aqi_values_list || [], // Store AQI values for explanation
