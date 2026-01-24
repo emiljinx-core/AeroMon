@@ -392,12 +392,12 @@ def get_routes():
             "routes": [
                 {
                     "route_id": "A",
-                    "final_aqi": number,
+                    "average_aqi": number,
                     "coordinates": [[lat, lon], [lat, lon], ...]
                 },
                 {
                     "route_id": "B",
-                    "final_aqi": number,
+                    "average_aqi": number,
                     "coordinates": [[lat, lon], [lat, lon], ...]
                 }
             ],
@@ -497,15 +497,21 @@ def get_routes():
             
             # If no non-common values, use all values
             if not non_common_a:
-                non_common_a = aqi_list_a
+                non_common_a = aqi_list_a if aqi_list_a else [route_a["average_aqi"]]
             if not non_common_b:
-                non_common_b = aqi_list_b
+                non_common_b = aqi_list_b if aqi_list_b else [route_b["average_aqi"]]
             
-            # Get peak of non-recommended route's non-common values
-            peak_non_recommended = max(non_common_a) if non_recommended_route == route_a else max(non_common_b)
-            
-            # Get least of recommended route's non-common values
-            least_recommended = min(non_common_b) if non_recommended_route == route_a else min(non_common_a)
+            # Safety check: ensure we have values to compare
+            if not non_common_a or not non_common_b:
+                # Fallback: use average AQI if lists are empty
+                peak_non_recommended = route_a["average_aqi"] if non_recommended_route == route_a else route_b["average_aqi"]
+                least_recommended = route_b["average_aqi"] if non_recommended_route == route_a else route_a["average_aqi"]
+            else:
+                # Get peak of non-recommended route's non-common values
+                peak_non_recommended = max(non_common_a) if non_recommended_route == route_a else max(non_common_b)
+                
+                # Get least of recommended route's non-common values
+                least_recommended = min(non_common_b) if non_recommended_route == route_a else min(non_common_a)
             
             # Apply penalty only if non-recommended route's peak > recommended route's least
             penalty = 0
@@ -541,18 +547,23 @@ def get_routes():
             for route in route_aqi_data:
                 route["final_aqi"] = route["average_aqi"]
         
-        # Step 5: Build response with final_aqi
+        # Step 5: Build response with final_aqi (but use average_aqi field name for frontend compatibility)
         route_data = []
         for route in route_aqi_data:
+            # Ensure final_aqi is set and is a valid number
+            final_aqi = route.get("final_aqi", route.get("average_aqi", 100.0))
+            if not isinstance(final_aqi, (int, float)) or math.isnan(final_aqi) or math.isinf(final_aqi):
+                final_aqi = route.get("average_aqi", 100.0)
+            
             route_data.append({
                 "route_id": route["route_id"],
-                "final_aqi": round(route["final_aqi"], 2),
+                "average_aqi": round(final_aqi, 2),  # Use final_aqi value but keep field name as average_aqi
                 "coordinates": route["coordinates"]
             })
         
         # Step 6: Determine recommended route (lowest final_aqi)
         if route_data:
-            recommended_route = min(route_data, key=lambda r: r["final_aqi"])
+            recommended_route = min(route_data, key=lambda r: r["average_aqi"])
             recommended_route_id = recommended_route["route_id"]
         else:
             recommended_route_id = "A"
