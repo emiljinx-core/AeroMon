@@ -24,6 +24,8 @@ CORS(
                 "https://aero-mon-9uux.vercel.app",
                 "https://aeromon-49434.web.app",
                 "https://aeromon-49434.firebaseapp.com",
+                "https://*.web.app", 
+                "https://*.firebaseapp.com",
             ]
         }
     },
