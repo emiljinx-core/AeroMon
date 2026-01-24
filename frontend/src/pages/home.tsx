@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Autocomplete } from "@/components/ui/autocomplete";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import heroImage from "@assets/generated_images/abstract_city_airflow_visualization.png";
 
 import { apiRequest } from "@/lib/queryClient";
@@ -81,33 +82,95 @@ function MapController({ routes, recommendedId }: { routes: RouteData[]; recomme
   return null;
 }
 
-// Helper function to get AQI level and description from value
+// Helper function to get AQI level, description, and color from value
 const getAQILevel = (value: number | null) => {
-  if (value === null) return { level: "Unknown", description: "Air quality data unavailable" };
-  if (value <= 50) return { level: "Good", description: "Air quality is satisfactory" };
-  if (value <= 100) return { level: "Moderate", description: "Air quality is acceptable" };
-  return { level: "Poor", description: "Air quality may be unhealthy" };
+  if (value === null) return { 
+    level: "Unknown", 
+    description: "Air quality data unavailable",
+    color: "text-muted-foreground",
+    bgColor: "bg-gray-100"
+  };
+  
+  if (value <= 50) return { 
+    level: "Good", 
+    description: "Air quality is satisfactory",
+    color: "text-emerald-600 dark:text-emerald-400",
+    bgColor: "bg-emerald-100 dark:bg-emerald-900/40"
+  };
+  
+  if (value <= 100) return { 
+    level: "Satisfactory", 
+    description: "Air quality is acceptable",
+    color: "text-green-600 dark:text-green-400",
+    bgColor: "bg-green-100 dark:bg-green-900/40"
+  };
+  
+  if (value <= 200) return { 
+    level: "Moderate", 
+    description: "Air quality may cause breathing discomfort",
+    color: "text-amber-600 dark:text-amber-400",
+    bgColor: "bg-amber-100 dark:bg-amber-900/40"
+  };
+  
+  if (value <= 300) return { 
+    level: "Poor", 
+    description: "Air quality may be unhealthy",
+    color: "text-orange-600 dark:text-orange-400",
+    bgColor: "bg-orange-100 dark:bg-orange-900/40"
+  };
+  
+  if (value <= 400) return { 
+    level: "Very Poor", 
+    description: "Air quality is very unhealthy",
+    color: "text-red-600 dark:text-red-400",
+    bgColor: "bg-red-100 dark:bg-red-900/40"
+  };
+  
+  return { 
+    level: "Hazardous", 
+    description: "Air quality is hazardous - avoid outdoor activities",
+    color: "text-red-700 dark:text-red-500",
+    bgColor: "bg-red-200 dark:bg-red-900/60"
+  };
 };
 
 function AQIIndicator({ value, size = "lg" }: { value: number; size?: "sm" | "lg" }) {
   const getColor = (val: number) => {
     if (val <= 50) return { 
-      bg: "bg-aqi-good", 
-      text: "text-gradient-good", 
+      bg: "bg-emerald-100 dark:bg-emerald-900/40", 
+      text: "text-emerald-700 dark:text-emerald-300", 
       ring: "ring-emerald-400/30",
       pulse: "bg-emerald-400/20"
     };
     if (val <= 100) return { 
-      bg: "bg-aqi-moderate", 
-      text: "text-gradient-moderate", 
+      bg: "bg-green-100 dark:bg-green-900/40", 
+      text: "text-green-700 dark:text-green-300", 
+      ring: "ring-green-400/30",
+      pulse: "bg-green-400/20"
+    };
+    if (val <= 200) return { 
+      bg: "bg-amber-100 dark:bg-amber-900/40", 
+      text: "text-amber-700 dark:text-amber-300", 
       ring: "ring-amber-400/30",
       pulse: "bg-amber-400/20"
     };
-    return { 
-      bg: "bg-aqi-poor", 
-      text: "text-gradient-poor", 
+    if (val <= 300) return { 
+      bg: "bg-orange-100 dark:bg-orange-900/40", 
+      text: "text-orange-700 dark:text-orange-300", 
+      ring: "ring-orange-400/30",
+      pulse: "bg-orange-400/20"
+    };
+    if (val <= 400) return { 
+      bg: "bg-red-100 dark:bg-red-900/40", 
+      text: "text-red-700 dark:text-red-300", 
       ring: "ring-red-400/30",
       pulse: "bg-red-400/20"
+    };
+    return { 
+      bg: "bg-red-200 dark:bg-red-900/60", 
+      text: "text-red-800 dark:text-red-400", 
+      ring: "ring-red-500/30",
+      pulse: "bg-red-500/20"
     };
   };
 
@@ -348,6 +411,9 @@ export default function Home() {
   const [expandedRoutes, setExpandedRoutes] = useState<Set<number>>(new Set());
   const [routeExplanations, setRouteExplanations] = useState<Record<number, string>>({});
   const [explanationLoading, setExplanationLoading] = useState<Record<number, boolean>>({});
+  const [showAQIDetails, setShowAQIDetails] = useState(false);
+  const [aqiDetailsExplanation, setAqiDetailsExplanation] = useState<string>("");
+  const [aqiDetailsLoading, setAqiDetailsLoading] = useState(false);
   const { toast } = useToast();
 
   const handleFindRoutes = async () => {
@@ -514,6 +580,47 @@ export default function Home() {
       });
     } finally {
       setExplanationLoading(prev => ({ ...prev, [route.id]: false }));
+    }
+  };
+
+  // Handle current AQI details
+  const handleViewAQIDetails = async () => {
+    if (currentAQI === null || aqiError) {
+      toast({
+        title: "Error",
+        description: "Air quality data is not available",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setShowAQIDetails(true);
+    setAqiDetailsLoading(true);
+    setAqiDetailsExplanation("");
+
+    try {
+      const res = await apiRequest("POST", "/get-current-aqi-details", {
+        aqi: currentAQI,
+        pm25: 12, // These could be fetched from API if available
+        o3: 28,
+        has_routes: routes.length > 0,
+      });
+
+      const data = await res.json();
+      if (data.explanation) {
+        setAqiDetailsExplanation(data.explanation);
+      } else {
+        throw new Error("No explanation received");
+      }
+    } catch (error) {
+      console.error("Error fetching AQI details:", error);
+      toast({
+        title: "Error",
+        description: "Failed to generate air quality details",
+        variant: "destructive",
+      });
+    } finally {
+      setAqiDetailsLoading(false);
     }
   };
 
@@ -858,7 +965,7 @@ export default function Home() {
                   <h3 className="font-display text-2xl font-bold mb-1">
                     Current Air Quality: {
                       currentAQI !== null && !aqiError ? (
-                        <span className="text-gradient-good">{getAQILevel(currentAQI).level}</span>
+                        <span className={getAQILevel(currentAQI).color}>{getAQILevel(currentAQI).level}</span>
                       ) : aqiLoading ? (
                         <span className="text-muted-foreground">Loading...</span>
                       ) : (
@@ -881,7 +988,13 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="sm:ml-auto">
-                  <Button variant="outline" className="gap-2" data-testid="button-view-details">
+                  <Button 
+                    variant="outline" 
+                    className="gap-2" 
+                    onClick={handleViewAQIDetails}
+                    disabled={currentAQI === null || aqiError}
+                    data-testid="button-view-details"
+                  >
                     View Details
                     <ArrowRight className="w-4 h-4" />
                   </Button>
@@ -944,6 +1057,54 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* AQI Details Dialog */}
+      <Dialog open={showAQIDetails} onOpenChange={setShowAQIDetails}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              Air Quality Details
+            </DialogTitle>
+            <DialogDescription>
+              Comprehensive analysis of current air quality conditions
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="mt-4">
+            {aqiDetailsLoading ? (
+              <div className="flex items-center justify-center gap-2 py-8">
+                <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                <span className="text-muted-foreground">Generating AI analysis...</span>
+              </div>
+            ) : aqiDetailsExplanation ? (
+              <div className="space-y-3 text-sm text-muted-foreground">
+                {aqiDetailsExplanation.split(/\n\n+/).map((paragraph, index) => {
+                  const trimmed = paragraph.trim();
+                  if (!trimmed) return null;
+                  
+                  // Check if it's a heading (starts and ends with **)
+                  if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
+                    return (
+                      <h4 key={index} className="font-semibold text-foreground text-base mt-4 first:mt-0">
+                        {trimmed.replace(/\*\*/g, '')}
+                      </h4>
+                    );
+                  }
+                  
+                  return (
+                    <p key={index} className="leading-relaxed">
+                      {trimmed}
+                    </p>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No details available.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

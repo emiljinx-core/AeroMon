@@ -894,6 +894,151 @@ Write in a friendly, conversational tone. Make it informative but easy to unders
         return jsonify({"explanation": explanation})
 
 
+@app.route("/get-current-aqi-details", methods=["POST"])
+def get_current_aqi_details():
+    """
+    Generate AI-powered explanation for current air quality using Gemini API.
+    
+    Request JSON:
+        {
+            "aqi": number,
+            "pm25": number (optional, in µg/m³),
+            "o3": number (optional, in ppb),
+            "has_routes": boolean (optional, whether user has routes)
+        }
+    
+    Response JSON:
+        {
+            "explanation": "string explanation"
+        }
+    """
+    try:
+        if not GEMINI_API_KEY:
+            print("ERROR: GEMINI_API_KEY not configured")
+            return jsonify({"error": "GEMINI_API_KEY not configured"}), 500
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        aqi = data.get("aqi")
+        pm25 = data.get("pm25", 12)  # Default values if not provided
+        o3 = data.get("o3", 28)
+        has_routes = data.get("has_routes", False)
+        
+        if aqi is None:
+            return jsonify({"error": "AQI value required"}), 400
+        
+        # Determine AQI level
+        if aqi <= 50:
+            aqi_level = "Good"
+        elif aqi <= 100:
+            aqi_level = "Satisfactory"
+        elif aqi <= 200:
+            aqi_level = "Moderate"
+        elif aqi <= 300:
+            aqi_level = "Poor"
+        elif aqi <= 400:
+            aqi_level = "Very Poor"
+        else:
+            aqi_level = "Hazardous"
+        
+        # Build comprehensive prompt for Gemini
+        prompt = f"""You are an air quality health advisor. Provide a detailed, structured explanation about the current air quality.
+
+Current Air Quality Information:
+- AQI: {aqi:.1f} ({aqi_level})
+- PM2.5: {pm25} µg/m³
+- Ozone (O₃): {o3} ppb
+- User has route options: {"Yes" if has_routes else "No"}
+
+Provide a comprehensive explanation covering ALL of the following sections in a natural, flowing narrative:
+
+1. **Health Interpretation**
+   - Explain what the current AQI level means for health
+   - Example format: "Air quality is currently in the {aqi_level} range (AQI {aqi:.0f}). [Explain health implications]."
+
+2. **Pollutant Breakdown Explanation**
+   - Explain PM2.5 levels: "PM2.5 levels at {pm25} µg/m³ indicate fine particulate matter concentration, which affects lung health."
+   - Explain Ozone levels: "Ozone (O₃) at {o3} ppb is [within/above/below] [range description]."
+
+3. **Short-term Advice**
+   - Provide actionable advice for sensitive individuals
+   - Example: "Sensitive individuals should limit outdoor exertion."
+   - Example: "Wearing a mask can reduce inhalation of particulates."
+
+4. **Trend-based Reasoning**
+   - Provide generic reasoning about what might contribute to current levels
+   - Example: "Nearby traffic congestion contributes to higher PM2.5 concentration."
+   - Keep it generic - no extra API needed
+
+5. **Travel Recommendation Context** (only if has_routes is True)
+   - Connect to route selection: "For your planned journey, selecting the recommended route reduces exposure to these pollutants."
+
+6. **Friendly Closing**
+   - End with an encouraging statement: "Stay safe and enjoy cleaner travel with AeroMon."
+
+Write in a friendly, conversational tone. Structure it as clear paragraphs. Be specific about the AQI and pollutant values. Make it informative but easy to understand."""
+
+        # Call Gemini API
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
+        
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": prompt
+                }]
+            }]
+        }
+        
+        try:
+            print(f"DEBUG: Calling Gemini API for current AQI details")
+            response = requests.post(gemini_url, json=payload, timeout=30)
+            print(f"DEBUG: Gemini API response status: {response.status_code}")
+            response.raise_for_status()
+            result = response.json()
+            
+            if "candidates" in result and len(result["candidates"]) > 0:
+                if "content" in result["candidates"][0] and "parts" in result["candidates"][0]["content"]:
+                    explanation = result["candidates"][0]["content"]["parts"][0]["text"]
+                    print(f"DEBUG: Successfully extracted explanation")
+                else:
+                    raise ValueError("Unexpected response structure")
+            else:
+                raise ValueError("No candidates in response")
+                
+        except requests.RequestException as e:
+            print(f"Gemini API error: {e}")
+            # Fallback explanation
+            explanation = f"""**Health Interpretation**
+
+Air quality is currently in the {aqi_level} range (AQI {aqi:.0f}). {"Prolonged outdoor exposure may cause breathing discomfort." if aqi > 100 else "Air quality is generally safe for most people."}
+
+**Pollutant Breakdown Explanation**
+
+PM2.5 levels at {pm25} µg/m³ indicate fine particulate matter concentration, which affects lung health. Ozone (O₃) at {o3} ppb is within moderate range.
+
+**Short-term Advice**
+
+{"Sensitive individuals should limit outdoor exertion." if aqi > 100 else "Most people can continue normal outdoor activities."} Wearing a mask can reduce inhalation of particulates.
+
+**Trend-based Reasoning**
+
+Nearby traffic congestion and industrial activities contribute to higher PM2.5 concentration in urban areas.
+
+{"**Travel Recommendation Context**\n\nFor your planned journey, selecting the recommended route reduces exposure to these pollutants.\n\n" if has_routes else ""}**Friendly Closing**
+
+Stay safe and enjoy cleaner travel with AeroMon."""
+        
+        return jsonify({"explanation": explanation})
+        
+    except Exception as e:
+        print(f"Error generating AQI details: {e}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return jsonify({"error": f"Failed to generate explanation: {str(e)}"}), 500
+
+
 @app.route("/reverse-geocode", methods=["POST"])
 def reverse_geocode_endpoint():
     """
