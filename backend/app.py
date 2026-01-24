@@ -187,6 +187,14 @@ def get_walking_routes(start_lat: float, start_lon: float,
         if not routes:
             raise ValueError("No routes found")
         
+        # Always return exactly 2 routes
+        if len(routes) > 2:
+            # Keep only first 2 routes
+            routes = routes[:2]
+        elif len(routes) == 1:
+            # Duplicate the single route
+            routes.append(routes[0])
+        
         return routes
         
     except requests.RequestException as e:
@@ -330,7 +338,7 @@ def get_aqi_for_coordinate(lat: float, lon: float) -> float:
         raise ValueError(f"Failed to fetch AQI: {str(e)}")
 
 
-def calculate_route_aqi(route_coordinates: List[Tuple[float, float]]) -> float:
+def calculate_route_aqi(route_coordinates: List[Tuple[float, float]]) -> Tuple[float, List[float]]:
     """
     Calculate average AQI for a route by sampling points and fetching AQI data.
     
@@ -338,7 +346,9 @@ def calculate_route_aqi(route_coordinates: List[Tuple[float, float]]) -> float:
         route_coordinates: List of (lat, lon) coordinates along the route
         
     Returns:
-        Average AQI value for the route
+        Tuple of (average_aqi, aqi_values_list) where:
+        - average_aqi: Average AQI value for the route
+        - aqi_values_list: List of AQI samples collected for that route
     """
     # Sample 8-12 points along the route
     num_samples = min(12, max(8, len(route_coordinates) // 10))
@@ -358,10 +368,11 @@ def calculate_route_aqi(route_coordinates: List[Tuple[float, float]]) -> float:
             continue
     
     if not aqi_values:
-        # If no AQI data available, return a default moderate value
-        return 100.0
+        # If no AQI data available, return default moderate value with empty list
+        return (100.0, [100.0])
     
-    return sum(aqi_values) / len(aqi_values)
+    average_aqi = sum(aqi_values) / len(aqi_values)
+    return (average_aqi, aqi_values)
 
 
 @app.route("/get-routes", methods=["POST"])
@@ -380,10 +391,14 @@ def get_routes():
             "routes": [
                 {
                     "route_id": "A",
-                    "average_aqi": number,
+                    "final_aqi": number,
                     "coordinates": [[lat, lon], [lat, lon], ...]
                 },
-                ...
+                {
+                    "route_id": "B",
+                    "final_aqi": number,
+                    "coordinates": [[lat, lon], [lat, lon], ...]
+                }
             ],
             "recommended_route_id": "A"
         }
@@ -415,28 +430,88 @@ def get_routes():
         print(f"Found {len(routes)} routes")
         
         # Step 3: Calculate AQI for each route
-        route_data = []
+        route_aqi_data = []
         for i, route_coords in enumerate(routes):
-            route_id = chr(65 + i)  # A, B, C, etc.
+            route_id = chr(65 + i)  # A, B, etc.
             print(f"Calculating AQI for Route {route_id}...")
             
             try:
-                average_aqi = calculate_route_aqi(route_coords)
-                print(f"Route {route_id} average AQI: {average_aqi:.2f}")
+                average_aqi, aqi_values_list = calculate_route_aqi(route_coords)
+                print(f"Route {route_id} average AQI: {average_aqi:.2f}, samples: {len(aqi_values_list)}")
             except Exception as e:
                 print(f"Error calculating AQI for Route {route_id}: {e}")
                 # Use default moderate AQI if calculation fails
                 average_aqi = 100.0
+                aqi_values_list = [100.0]
             
-            route_data.append({
+            route_aqi_data.append({
                 "route_id": route_id,
-                "average_aqi": round(average_aqi, 2),
+                "average_aqi": average_aqi,
+                "aqi_values_list": aqi_values_list,
                 "coordinates": [[lat, lon] for lat, lon in route_coords]
             })
         
-        # Step 4: Determine recommended route (lowest AQI)
+        # Step 4: Apply penalty-based comparison
+        if len(route_aqi_data) >= 2:
+            route_a = route_aqi_data[0]
+            route_b = route_aqi_data[1]
+            
+            # Compute peak AQI for each route
+            peak_aqi_a = max(route_a["aqi_values_list"])
+            peak_aqi_b = max(route_b["aqi_values_list"])
+            
+            # Identify which route has higher peak AQI
+            penalty_a = 0
+            penalty_b = 0
+            
+            if peak_aqi_a > peak_aqi_b:
+                # Route A is candidate for penalty
+                if 100 <= peak_aqi_a < 150:
+                    penalty_a = 15
+                elif 150 <= peak_aqi_a < 200:
+                    penalty_a = 20
+                elif 200 <= peak_aqi_a < 250:
+                    penalty_a = 25
+                elif peak_aqi_a >= 250:
+                    penalty_a = 30
+            elif peak_aqi_b > peak_aqi_a:
+                # Route B is candidate for penalty
+                if 100 <= peak_aqi_b < 150:
+                    penalty_b = 15
+                elif 150 <= peak_aqi_b < 200:
+                    penalty_b = 20
+                elif 200 <= peak_aqi_b < 250:
+                    penalty_b = 25
+                elif peak_aqi_b >= 250:
+                    penalty_b = 30
+            # If equal peaks, no penalty applied
+            
+            # Calculate final AQI
+            final_aqi_a = route_a["average_aqi"] + penalty_a
+            final_aqi_b = route_b["average_aqi"] + penalty_b
+            
+            route_a["final_aqi"] = final_aqi_a
+            route_b["final_aqi"] = final_aqi_b
+            
+            print(f"Route A: avg={route_a['average_aqi']:.2f}, peak={peak_aqi_a:.2f}, penalty={penalty_a}, final={final_aqi_a:.2f}")
+            print(f"Route B: avg={route_b['average_aqi']:.2f}, peak={peak_aqi_b:.2f}, penalty={penalty_b}, final={final_aqi_b:.2f}")
+        else:
+            # Fallback if we don't have 2 routes
+            for route in route_aqi_data:
+                route["final_aqi"] = route["average_aqi"]
+        
+        # Step 5: Build response with final_aqi
+        route_data = []
+        for route in route_aqi_data:
+            route_data.append({
+                "route_id": route["route_id"],
+                "final_aqi": round(route["final_aqi"], 2),
+                "coordinates": route["coordinates"]
+            })
+        
+        # Step 6: Determine recommended route (lowest final_aqi)
         if route_data:
-            recommended_route = min(route_data, key=lambda r: r["average_aqi"])
+            recommended_route = min(route_data, key=lambda r: r["final_aqi"])
             recommended_route_id = recommended_route["route_id"]
         else:
             recommended_route_id = "A"
