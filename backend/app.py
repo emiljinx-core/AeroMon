@@ -11,6 +11,7 @@ import requests
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from typing import List, Tuple, Dict, Any
+from collections import Counter
 import time
 
 app = Flask(__name__)
@@ -451,50 +452,90 @@ def get_routes():
                 "coordinates": [[lat, lon] for lat, lon in route_coords]
             })
         
-        # Step 4: Apply penalty-based comparison
+        # Step 4: Apply penalty-based comparison using non-common AQI values
         if len(route_aqi_data) >= 2:
             route_a = route_aqi_data[0]
             route_b = route_aqi_data[1]
             
-            # Compute peak AQI for each route
-            peak_aqi_a = max(route_a["aqi_values_list"])
-            peak_aqi_b = max(route_b["aqi_values_list"])
+            # Identify which route is non-recommended (higher average AQI)
+            if route_a["average_aqi"] > route_b["average_aqi"]:
+                non_recommended_route = route_a
+                recommended_route = route_b
+                non_recommended_id = "A"
+            else:
+                non_recommended_route = route_b
+                recommended_route = route_a
+                non_recommended_id = "B"
             
-            # Identify which route has higher peak AQI
-            penalty_a = 0
-            penalty_b = 0
+            # Find common and non-common AQI values
+            # Round to nearest integer for comparison (to handle floating point precision)
+            aqi_list_a = [round(aqi) for aqi in route_a["aqi_values_list"]]
+            aqi_list_b = [round(aqi) for aqi in route_b["aqi_values_list"]]
             
-            if peak_aqi_a > peak_aqi_b:
-                # Route A is candidate for penalty
-                if 100 <= peak_aqi_a < 150:
-                    penalty_a = 15
-                elif 150 <= peak_aqi_a < 200:
-                    penalty_a = 20
-                elif 200 <= peak_aqi_a < 250:
-                    penalty_a = 25
-                elif peak_aqi_a >= 250:
-                    penalty_a = 30
-            elif peak_aqi_b > peak_aqi_a:
-                # Route B is candidate for penalty
-                if 100 <= peak_aqi_b < 150:
-                    penalty_b = 15
-                elif 150 <= peak_aqi_b < 200:
-                    penalty_b = 20
-                elif 200 <= peak_aqi_b < 250:
-                    penalty_b = 25
-                elif peak_aqi_b >= 250:
-                    penalty_b = 30
-            # If equal peaks, no penalty applied
+            # Find common values (values that appear in both routes)
+            # For each value, count occurrences in both lists and match them
+            counter_a = Counter(aqi_list_a)
+            counter_b = Counter(aqi_list_b)
             
-            # Calculate final AQI
-            final_aqi_a = route_a["average_aqi"] + penalty_a
-            final_aqi_b = route_b["average_aqi"] + penalty_b
+            common_values = []
+            non_common_a = []
+            non_common_b = []
+            
+            # Process all unique values from both routes
+            all_values = set(aqi_list_a + aqi_list_b)
+            for val in all_values:
+                count_a = counter_a.get(val, 0)
+                count_b = counter_b.get(val, 0)
+                common_count = min(count_a, count_b)
+                
+                # Add common values
+                common_values.extend([val] * common_count)
+                
+                # Add non-common values (remaining after matching)
+                non_common_a.extend([val] * (count_a - common_count))
+                non_common_b.extend([val] * (count_b - common_count))
+            
+            # If no non-common values, use all values
+            if not non_common_a:
+                non_common_a = aqi_list_a
+            if not non_common_b:
+                non_common_b = aqi_list_b
+            
+            # Get peak of non-recommended route's non-common values
+            peak_non_recommended = max(non_common_a) if non_recommended_route == route_a else max(non_common_b)
+            
+            # Get least of recommended route's non-common values
+            least_recommended = min(non_common_b) if non_recommended_route == route_a else min(non_common_a)
+            
+            # Apply penalty only if non-recommended route's peak > recommended route's least
+            penalty = 0
+            if peak_non_recommended > least_recommended:
+                # Apply penalty to non-recommended route based on its peak
+                if 100 <= peak_non_recommended < 150:
+                    penalty = 15
+                elif 150 <= peak_non_recommended < 200:
+                    penalty = 20
+                elif 200 <= peak_non_recommended < 250:
+                    penalty = 25
+                elif peak_non_recommended >= 250:
+                    penalty = 30
+            
+            # Calculate final AQI (penalty only applied to non-recommended route)
+            if non_recommended_route == route_a:
+                final_aqi_a = route_a["average_aqi"] + penalty
+                final_aqi_b = route_b["average_aqi"]
+            else:
+                final_aqi_a = route_a["average_aqi"]
+                final_aqi_b = route_b["average_aqi"] + penalty
             
             route_a["final_aqi"] = final_aqi_a
             route_b["final_aqi"] = final_aqi_b
             
-            print(f"Route A: avg={route_a['average_aqi']:.2f}, peak={peak_aqi_a:.2f}, penalty={penalty_a}, final={final_aqi_a:.2f}")
-            print(f"Route B: avg={route_b['average_aqi']:.2f}, peak={peak_aqi_b:.2f}, penalty={penalty_b}, final={final_aqi_b:.2f}")
+            print(f"Common AQI values: {common_values}")
+            print(f"Route A non-common: {non_common_a}, Route B non-common: {non_common_b}")
+            print(f"Non-recommended route ({non_recommended_id}): peak={peak_non_recommended:.2f}, least_recommended={least_recommended:.2f}")
+            print(f"Route A: avg={route_a['average_aqi']:.2f}, penalty={penalty if non_recommended_route == route_a else 0}, final={final_aqi_a:.2f}")
+            print(f"Route B: avg={route_b['average_aqi']:.2f}, penalty={penalty if non_recommended_route == route_b else 0}, final={final_aqi_b:.2f}")
         else:
             # Fallback if we don't have 2 routes
             for route in route_aqi_data:

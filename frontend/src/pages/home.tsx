@@ -642,7 +642,7 @@ export default function Home() {
               <div className="flex items-center justify-between">
                 <h2 className="font-display text-xl font-semibold">Recommended Routes</h2>
                 <Badge variant="secondary" className="font-medium">
-                  3 options
+                  2 options
                 </Badge>
               </div>
 
