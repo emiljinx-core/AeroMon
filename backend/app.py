@@ -610,7 +610,10 @@ def get_route_explanation():
     """
     try:
         if not GEMINI_API_KEY:
-            return jsonify({"error": "GEMINI_API_KEY not configured"}), 500
+            print("ERROR: GEMINI_API_KEY not configured in environment variables")
+            return jsonify({"error": "GEMINI_API_KEY not configured. Please set it in your environment variables."}), 500
+        
+        print(f"DEBUG: Gemini API key is set (first 10 chars: {GEMINI_API_KEY[:10]}...)")
         
         data = request.get_json()
         if not data:
@@ -733,7 +736,8 @@ Provide a detailed explanation covering ALL of the following points in a natural
 Write in a friendly, conversational tone. Make it informative but easy to understand. Structure it as 2-3 well-organized paragraphs that flow naturally. Be specific about AQI values and their health implications."""
 
         # Call Gemini API
-        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+        # Try gemini-1.5-pro first, fallback to gemini-pro
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
         
         payload = {
             "contents": [{
@@ -743,28 +747,151 @@ Write in a friendly, conversational tone. Make it informative but easy to unders
             }]
         }
         
-        response = requests.post(gemini_url, json=payload, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-        
-        # Extract the generated text
-        if "candidates" in result and len(result["candidates"]) > 0:
-            explanation = result["candidates"][0]["content"]["parts"][0]["text"]
-        else:
-            explanation = f"Route {route_id} has an average AQI of {average_aqi:.1f} ({aqi_level}), with values ranging from {min_aqi:.1f} to {peak_aqi:.1f}. This route covers {distance_km:.1f} km and is {'recommended' if is_recommended else 'an alternative option'} based on air quality analysis."
+        try:
+            print(f"DEBUG: Calling Gemini API with model gemini-1.5-pro")
+            print(f"DEBUG: Prompt length: {len(prompt)} characters")
+            response = requests.post(gemini_url, json=payload, timeout=30)
+            print(f"DEBUG: Gemini API response status: {response.status_code}")
+            response.raise_for_status()
+            result = response.json()
+            print(f"DEBUG: Gemini API response keys: {result.keys() if isinstance(result, dict) else 'Not a dict'}")
+            
+            # Extract the generated text
+            if "candidates" in result and len(result["candidates"]) > 0:
+                if "content" in result["candidates"][0] and "parts" in result["candidates"][0]["content"]:
+                    explanation = result["candidates"][0]["content"]["parts"][0]["text"]
+                    print(f"DEBUG: Successfully extracted explanation (length: {len(explanation)} chars)")
+                else:
+                    print(f"ERROR: Unexpected Gemini response structure: {result}")
+                    raise ValueError("Unexpected response structure")
+            else:
+                print(f"ERROR: Gemini API returned no candidates: {result}")
+                raise ValueError("No candidates in response")
+                
+        except requests.RequestException as e:
+            # Try fallback model
+            print(f"Gemini 1.5-pro error: {e}, trying gemini-pro...")
+            try:
+                gemini_url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+                response = requests.post(gemini_url_fallback, json=payload, timeout=30)
+                response.raise_for_status()
+                result = response.json()
+                
+                if "candidates" in result and len(result["candidates"]) > 0:
+                    explanation = result["candidates"][0]["content"]["parts"][0]["text"]
+                else:
+                    raise ValueError("No candidates in fallback response")
+            except Exception as e2:
+                print(f"Gemini API fallback also failed: {e2}")
+                raise e
         
         return jsonify({"explanation": explanation})
         
     except requests.RequestException as e:
-        print(f"Gemini API error: {e}")
-        # Fallback explanation
+        print(f"Gemini API request error: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_detail = e.response.json()
+                print(f"Gemini API error details: {error_detail}")
+            except:
+                print(f"Gemini API error response: {e.response.text}")
+        # Fallback explanation with more detail
+        route_id = data.get("route_id", "Unknown")
         average_aqi = data.get("average_aqi", 100)
         is_recommended = data.get("is_recommended", False)
-        explanation = f"Route {route_id} has an average AQI of {average_aqi:.1f}. This route is {'recommended' if is_recommended else 'an alternative option'} based on air quality analysis."
+        peak_aqi = max(data.get("aqi_values_list", [average_aqi])) if data.get("aqi_values_list") else average_aqi
+        min_aqi = min(data.get("aqi_values_list", [average_aqi])) if data.get("aqi_values_list") else average_aqi
+        distance_km = data.get("distance_km", 0)
+        
+        # Build a comprehensive fallback explanation
+        explanation_parts = []
+        
+        # 1. Why recommended
+        if is_recommended:
+            other_route_id = "B" if route_id == "A" else "A"
+            explanation_parts.append(f"Route {route_id} is recommended because it has lower air pollution exposure compared to Route {other_route_id}.")
+        else:
+            other_route_id = "B" if route_id == "A" else "A"
+            explanation_parts.append(f"Route {route_id} is an alternative option, while Route {other_route_id} is the recommended route with better air quality.")
+        
+        # 2. Air quality levels
+        explanation_parts.append(f"Along Route {route_id}, AQI values range between {min_aqi:.0f}–{peak_aqi:.0f}, indicating {aqi_description.lower()}.")
+        
+        # 3. Health exposure (if comparison data available)
+        other_route_aqi = data.get("other_route_aqi")
+        if other_route_aqi:
+            if peak_aqi > other_route_aqi:
+                explanation_parts.append(f"Route {route_id} passes through areas with higher peak AQI ({peak_aqi:.0f}), increasing pollution exposure compared to the alternative route.")
+        
+        # 4. Distance and time
+        duration_min = data.get("duration_min", 0)
+        if duration_min > 0:
+            hours = duration_min // 60
+            minutes = duration_min % 60
+            time_text = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+            explanation_parts.append(f"Both routes take approximately {distance_km:.1f} km and {time_text}, so air quality becomes the deciding factor.")
+        else:
+            explanation_parts.append(f"This route covers {distance_km:.1f} km.")
+        
+        # 5. Cleanliness percentage
+        cleanliness_percentage = data.get("cleanliness_percentage", 0)
+        if cleanliness_percentage > 0 and is_recommended:
+            other_route_id = "B" if route_id == "A" else "A"
+            explanation_parts.append(f"Route {route_id} offers approximately {cleanliness_percentage:.0f}% cleaner air compared to Route {other_route_id}.")
+        
+        # 6. Practical suggestion
+        if is_recommended:
+            explanation_parts.append(f"If you are sensitive to pollution or traveling with children, Route {route_id} is safer.")
+        else:
+            other_route_id = "B" if route_id == "A" else "A"
+            explanation_parts.append(f"If you are sensitive to pollution or traveling with children, Route {other_route_id} (the recommended route) is safer.")
+        
+        # 7. Friendly closing
+        if is_recommended:
+            explanation_parts.append(f"Choosing Route {route_id} ensures a healthier and more comfortable journey.")
+        else:
+            other_route_id = "B" if route_id == "A" else "A"
+            explanation_parts.append(f"Consider choosing Route {other_route_id} for a healthier and more comfortable journey.")
+        
+        explanation = " ".join(explanation_parts)
         return jsonify({"explanation": explanation})
     except Exception as e:
         print(f"Error generating explanation: {e}")
-        return jsonify({"error": f"Failed to generate explanation: {str(e)}"}), 500
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        # Provide a more detailed fallback explanation
+        route_id = data.get("route_id", "Unknown")
+        average_aqi = data.get("average_aqi", 100)
+        is_recommended = data.get("is_recommended", False)
+        peak_aqi = max(data.get("aqi_values_list", [average_aqi])) if data.get("aqi_values_list") else average_aqi
+        min_aqi = min(data.get("aqi_values_list", [average_aqi])) if data.get("aqi_values_list") else average_aqi
+        distance_km = data.get("distance_km", 0)
+        other_route_aqi = data.get("other_route_aqi")
+        cleanliness_percentage = data.get("cleanliness_percentage", 0)
+        
+        # Build a basic explanation manually
+        explanation_parts = []
+        
+        if is_recommended:
+            explanation_parts.append(f"Route {route_id} is recommended because it has lower air pollution exposure.")
+        else:
+            explanation_parts.append(f"Route {route_id} is an alternative option.")
+        
+        explanation_parts.append(f"Along Route {route_id}, AQI values range between {min_aqi:.0f}–{peak_aqi:.0f}, indicating {aqi_description.lower()}.")
+        
+        if other_route_aqi:
+            other_route_id = "B" if route_id == "A" else "A"
+            if cleanliness_percentage > 0:
+                explanation_parts.append(f"Route {route_id} offers approximately {cleanliness_percentage:.0f}% cleaner air compared to Route {other_route_id}.")
+        
+        explanation_parts.append(f"This route covers {distance_km:.1f} km.")
+        
+        if is_recommended:
+            explanation_parts.append("If you are sensitive to pollution or traveling with children, Route {route_id} is safer.")
+            explanation_parts.append(f"Choosing Route {route_id} ensures a healthier and more comfortable journey.")
+        
+        explanation = " ".join(explanation_parts)
+        return jsonify({"explanation": explanation})
 
 
 @app.route("/reverse-geocode", methods=["POST"])
