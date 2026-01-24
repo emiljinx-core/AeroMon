@@ -31,10 +31,14 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_URL = "https://router.project-osrm.org/route/v1"
 OPENWEATHER_AIR_POLLUTION_URL = "http://api.openweathermap.org/data/2.5/air_pollution"
 
-# Get API key from environment variable
+# Get API keys from environment variables
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 if not OPENWEATHER_API_KEY:
     print("Warning: OPENWEATHER_API_KEY not set. Air quality data will not be available.")
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    print("Warning: GEMINI_API_KEY not set. Route explanations will not be available.")
 
 
 def geocode_location(location: str) -> Tuple[float, float]:
@@ -558,6 +562,7 @@ def get_routes():
             route_data.append({
                 "route_id": route["route_id"],
                 "average_aqi": round(final_aqi, 2),  # Use final_aqi value but keep field name as average_aqi
+                "aqi_values_list": route.get("aqi_values_list", []),  # Include AQI values for explanation
                 "coordinates": route["coordinates"]
             })
         
@@ -578,6 +583,120 @@ def get_routes():
     except Exception as e:
         print(f"Unexpected error: {e}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+
+@app.route("/get-route-explanation", methods=["POST"])
+def get_route_explanation():
+    """
+    Generate AI-powered explanation for a route using Gemini API.
+    
+    Request JSON:
+        {
+            "route_id": "A" or "B",
+            "average_aqi": number,
+            "aqi_values_list": [number, number, ...],
+            "distance_km": number,
+            "is_recommended": boolean,
+            "coordinates": [[lat, lon], [lat, lon], ...]
+        }
+    
+    Response JSON:
+        {
+            "explanation": "string explanation"
+        }
+    """
+    try:
+        if not GEMINI_API_KEY:
+            return jsonify({"error": "GEMINI_API_KEY not configured"}), 500
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        route_id = data.get("route_id")
+        average_aqi = data.get("average_aqi")
+        aqi_values_list = data.get("aqi_values_list", [])
+        distance_km = data.get("distance_km", 0)
+        is_recommended = data.get("is_recommended", False)
+        coordinates = data.get("coordinates", [])
+        
+        # Calculate statistics
+        peak_aqi = max(aqi_values_list) if aqi_values_list else average_aqi
+        min_aqi = min(aqi_values_list) if aqi_values_list else average_aqi
+        
+        # Determine AQI level
+        if average_aqi <= 50:
+            aqi_level = "Good"
+            aqi_description = "excellent air quality"
+        elif average_aqi <= 100:
+            aqi_level = "Moderate"
+            aqi_description = "acceptable air quality"
+        elif average_aqi <= 150:
+            aqi_level = "Unhealthy for Sensitive Groups"
+            aqi_description = "air quality that may affect sensitive individuals"
+        elif average_aqi <= 200:
+            aqi_level = "Unhealthy"
+            aqi_description = "poor air quality"
+        elif average_aqi <= 300:
+            aqi_level = "Very Unhealthy"
+            aqi_description = "very poor air quality"
+        else:
+            aqi_level = "Hazardous"
+            aqi_description = "hazardous air quality"
+        
+        # Build prompt for Gemini
+        prompt = f"""You are an air quality route analysis assistant. Provide a clear, informative explanation about Route {route_id}.
+
+Route Information:
+- Route ID: {route_id}
+- Distance: {distance_km:.1f} km
+- Average AQI: {average_aqi:.1f} ({aqi_level})
+- Peak AQI: {peak_aqi:.1f}
+- Minimum AQI: {min_aqi:.1f}
+- Recommended: {"Yes" if is_recommended else "No"}
+
+Provide a comprehensive explanation (2-3 paragraphs) covering:
+1. Why this route is {"recommended" if is_recommended else "an alternative option"}
+2. The air quality levels along this route ({aqi_description})
+3. The exposure risk based on the AQI range ({min_aqi:.1f} to {peak_aqi:.1f})
+4. Health considerations for travelers
+5. Any additional insights about this route
+
+Write in a friendly, informative tone. Be specific about the AQI values and what they mean for health."""
+
+        # Call Gemini API
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+        
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": prompt
+                }]
+            }]
+        }
+        
+        response = requests.post(gemini_url, json=payload, timeout=30)
+        response.raise_for_status()
+        result = response.json()
+        
+        # Extract the generated text
+        if "candidates" in result and len(result["candidates"]) > 0:
+            explanation = result["candidates"][0]["content"]["parts"][0]["text"]
+        else:
+            explanation = f"Route {route_id} has an average AQI of {average_aqi:.1f} ({aqi_level}), with values ranging from {min_aqi:.1f} to {peak_aqi:.1f}. This route covers {distance_km:.1f} km and is {'recommended' if is_recommended else 'an alternative option'} based on air quality analysis."
+        
+        return jsonify({"explanation": explanation})
+        
+    except requests.RequestException as e:
+        print(f"Gemini API error: {e}")
+        # Fallback explanation
+        average_aqi = data.get("average_aqi", 100)
+        is_recommended = data.get("is_recommended", False)
+        explanation = f"Route {route_id} has an average AQI of {average_aqi:.1f}. This route is {'recommended' if is_recommended else 'an alternative option'} based on air quality analysis."
+        return jsonify({"explanation": explanation})
+    except Exception as e:
+        print(f"Error generating explanation: {e}")
+        return jsonify({"error": f"Failed to generate explanation: {str(e)}"}), 500
 
 
 @app.route("/reverse-geocode", methods=["POST"])

@@ -13,10 +13,12 @@ import {
   TrendingDown,
   Leaf,
   ChevronRight,
+  ChevronDown,
   LocateFixed,
   ArrowRight,
   Sparkles,
-  Route
+  Route,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -39,6 +41,8 @@ interface RouteData {
   description: string;
   savings: string;
   coordinates?: [number, number][];
+  routeId?: string; // A or B
+  aqiValuesList?: number[]; // Store AQI values for explanation
 }
 
 const ROUTE_COLORS = ["#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"];
@@ -120,7 +124,21 @@ function AQIIndicator({ value, size = "lg" }: { value: number; size?: "sm" | "lg
   );
 }
 
-function RouteCard({ route, index }: { route: RouteData; index: number }) {
+function RouteCard({ 
+  route, 
+  index, 
+  isExpanded, 
+  onToggle, 
+  explanation, 
+  explanationLoading 
+}: { 
+  route: RouteData; 
+  index: number;
+  isExpanded: boolean;
+  onToggle: () => void;
+  explanation?: string;
+  explanationLoading: boolean;
+}) {
   const getAQIStyles = (level: string) => {
     switch (level) {
       case "good":
@@ -141,49 +159,94 @@ function RouteCard({ route, index }: { route: RouteData; index: number }) {
       transition={{ delay: index * 0.1, duration: 0.4 }}
     >
       <Card
-        className={`p-4 cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 border ${styles.border} bg-card/80 backdrop-blur-sm`}
+        className={`transition-all duration-300 hover:shadow-lg border ${styles.border} bg-card/80 backdrop-blur-sm ${isExpanded ? 'shadow-lg' : ''}`}
         data-testid={`route-card-${route.id}`}
       >
-        <div className="flex items-start gap-4">
-          <div className="flex-shrink-0">
-            <AQIIndicator value={route.aqiScore} size="sm" />
-          </div>
-
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <h3 className="font-display font-semibold text-foreground">{route.name}</h3>
-              {route.aqiLevel === "good" && (
-                <Badge className={`${styles.badge} text-xs font-medium`}>
-                  <Leaf className="w-3 h-3 mr-1" />
-                  Recommended
-                </Badge>
-              )}
+        <div className="p-4">
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0">
+              <AQIIndicator value={route.aqiScore} size="sm" />
             </div>
 
-            <p className="text-sm text-muted-foreground mb-2">{route.description}</p>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <h3 className="font-display font-semibold text-foreground">{route.name}</h3>
+                {route.aqiLevel === "good" && (
+                  <Badge className={`${styles.badge} text-xs font-medium`}>
+                    <Leaf className="w-3 h-3 mr-1" />
+                    Recommended
+                  </Badge>
+                )}
+              </div>
 
-            <div className="flex items-center gap-4 text-sm">
-              <span className="flex items-center gap-1 text-muted-foreground">
-                {route.mode === "walk" ? <Footprints className="w-4 h-4" /> : <Bike className="w-4 h-4" />}
-                {route.distance}
-              </span>
-              <span className="flex items-center gap-1 text-muted-foreground">
-                <Clock className="w-4 h-4" />
-                {route.duration}
-              </span>
-              {route.savings !== "Standard route" && (
-                <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                  <TrendingDown className="w-4 h-4" />
-                  {route.savings}
+              <p className="text-sm text-muted-foreground mb-2">{route.description}</p>
+
+              <div className="flex items-center gap-4 text-sm">
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  {route.mode === "walk" ? <Footprints className="w-4 h-4" /> : <Bike className="w-4 h-4" />}
+                  {route.distance}
                 </span>
-              )}
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  <Clock className="w-4 h-4" />
+                  {route.duration}
+                </span>
+                {route.savings !== "Standard route" && (
+                  <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                    <TrendingDown className="w-4 h-4" />
+                    {route.savings}
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
 
-          <Button variant="ghost" size="icon" className="flex-shrink-0" data-testid={`select-route-${route.id}`}>
-            <ChevronRight className="w-5 h-5" />
-          </Button>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="flex-shrink-0" 
+              onClick={onToggle}
+              data-testid={`select-route-${route.id}`}
+            >
+              {isExpanded ? (
+                <ChevronDown className="w-5 h-5" />
+              ) : (
+                <ChevronRight className="w-5 h-5" />
+              )}
+            </Button>
+          </div>
         </div>
+
+        <AnimatePresence>
+          {isExpanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="overflow-hidden"
+            >
+              <div className="px-4 pb-4 pt-2 border-t border-border/50">
+                {explanationLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Generating AI explanation...</span>
+                  </div>
+                ) : explanation ? (
+                  <div className="space-y-2">
+                    <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-primary" />
+                      AI Route Analysis
+                    </h4>
+                    <p className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed">
+                      {explanation}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No explanation available.</p>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </Card>
     </motion.div>
   );
@@ -282,6 +345,9 @@ export default function Home() {
   const [aqiLoading, setAqiLoading] = useState(false);
   const [aqiError, setAqiError] = useState(false);
   const [travelMode, setTravelMode] = useState<"walk" | "bike">("bike"); // Default to bike
+  const [expandedRoutes, setExpandedRoutes] = useState<Set<number>>(new Set());
+  const [routeExplanations, setRouteExplanations] = useState<Record<number, string>>({});
+  const [explanationLoading, setExplanationLoading] = useState<Record<number, boolean>>({});
   const { toast } = useToast();
 
   const handleFindRoutes = async () => {
@@ -351,11 +417,17 @@ export default function Home() {
           description: index === 0 ? "Recommended Route" : "Alternative Route",
           savings: index === 0 ? "Recommended" : savings,
           coordinates: route.coordinates || [],
+          routeId: route.route_id, // Store route ID (A or B)
+          aqiValuesList: route.aqi_values_list || [], // Store AQI values for explanation
         };
       });
 
       setRoutes(transformedRoutes);
       setShowRoutes(true);
+      // Reset expanded routes when new routes are fetched
+      setExpandedRoutes(new Set());
+      setRouteExplanations({});
+      setExplanationLoading({});
     } catch (error) {
       console.error("Route fetch error:", error);
       toast({
@@ -366,6 +438,57 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Fetch route explanation when expanded
+  const fetchRouteExplanation = async (route: RouteData) => {
+    if (routeExplanations[route.id]) {
+      return; // Already fetched
+    }
+
+    setExplanationLoading(prev => ({ ...prev, [route.id]: true }));
+
+    try {
+      const isRecommended = route.name.includes(recommendedRouteId || "");
+      const res = await apiRequest("POST", "/get-route-explanation", {
+        route_id: route.routeId || route.name.replace("Route ", ""),
+        average_aqi: route.aqiScore,
+        aqi_values_list: route.aqiValuesList || [],
+        distance_km: route.distanceKm,
+        is_recommended: isRecommended,
+        coordinates: route.coordinates || [],
+      });
+
+      const data = await res.json();
+      if (data.explanation) {
+        setRouteExplanations(prev => ({ ...prev, [route.id]: data.explanation }));
+      }
+    } catch (error) {
+      console.error("Error fetching explanation:", error);
+      toast({
+        title: "Error",
+        description: "Failed to generate route explanation",
+        variant: "destructive",
+      });
+    } finally {
+      setExplanationLoading(prev => ({ ...prev, [route.id]: false }));
+    }
+  };
+
+  // Handle route card toggle
+  const handleRouteToggle = (routeId: number) => {
+    const newExpanded = new Set(expandedRoutes);
+    if (newExpanded.has(routeId)) {
+      newExpanded.delete(routeId);
+    } else {
+      newExpanded.add(routeId);
+      // Fetch explanation when expanding
+      const route = routes.find(r => r.id === routeId);
+      if (route) {
+        fetchRouteExplanation(route);
+      }
+    }
+    setExpandedRoutes(newExpanded);
   };
 
   // Update route durations when travel mode changes
@@ -650,7 +773,15 @@ export default function Home() {
                 {showRoutes && (
                   <div className="space-y-3">
                     {routes.map((route, index) => (
-                      <RouteCard key={route.id} route={route} index={index} />
+                      <RouteCard 
+                        key={route.id} 
+                        route={route} 
+                        index={index}
+                        isExpanded={expandedRoutes.has(route.id)}
+                        onToggle={() => handleRouteToggle(route.id)}
+                        explanation={routeExplanations[route.id]}
+                        explanationLoading={explanationLoading[route.id] || false}
+                      />
                     ))}
                   </div>
                 )}
