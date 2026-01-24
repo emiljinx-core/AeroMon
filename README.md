@@ -4,8 +4,6 @@
 
 AeroMon is an air quality-aware route finder that helps you choose the path with the lowest pollution exposure between two locations. By analyzing real-time air quality data across multiple route options, AeroMon recommends the healthiest path for your journey.
 
-![AeroMon Banner](https://via.placeholder.com/1200x300/4A90E2/FFFFFF?text=AeroMon+-+Breathe+Easy)
-
 ---
 
 ## ✨ Features
